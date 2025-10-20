@@ -1,8 +1,8 @@
 # Core app
-streamlit>=1.36
+streamlit==1.50.0
 pandas>=2.2
 numpy>=1.26
-plotly>=5.22
+plotly==5.22.0
 
 # Parquet I/O
 pyarrow>=15
@@ -20,4 +20,5 @@ fiona>=1.9
 pyproj>=3.6
 
 # Plotly click capture used on Home and dashboards
-streamlit-plotly-events>=0.0.6
+streamlit-plotly-events==0.0.6
+
