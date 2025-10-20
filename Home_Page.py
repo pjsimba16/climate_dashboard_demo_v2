@@ -267,7 +267,7 @@ def _now_label() -> str:
 
 # ---------- TITLE & SUBTITLE ----------
 st.markdown("<h1 style='text-align:center'>Global Database of Subnational Climate Indicators</h1>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>Built and Maintained by Ro...Fernando and Patrick Jaime Simba</div>", unsafe_allow_html=True)
+st.markdown("<div class='subtitle'>Built and Maintained by Roshen Fernando and Patrick Jaime Simba</div>", unsafe_allow_html=True)
 st.divider()
 
 # ---------- HERO ----------
