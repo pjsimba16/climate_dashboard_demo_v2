@@ -9,7 +9,13 @@ import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px  # for continent lookup & hist
 import streamlit.components.v1 as components
-from streamlit_plotly_events import plotly_events
+
+# SAFE: guard optional component (avoid EOF on missing wheel)
+try:
+    from streamlit_plotly_events import plotly_events
+except Exception:
+    plotly_events = None
+
 from huggingface_hub import hf_hub_download
 
 # Prefer the user's local timezone (Asia/Manila) for the "Last Update" badge
@@ -212,8 +218,8 @@ else:
 
 all_countries["iso3"] = all_countries["iso3"].astype(str).str.upper().str.strip()
 
-# Name remaps
-_name_overrides = {"CHN": "People's Republic of China", "TWN": "Taipe, China", "HKG": "Hong Kong, China"}
+# Name remaps (standardized)
+_name_overrides = {"CHN": "People's Republic of China", "TWN": "Taipei,China", "HKG": "Hong Kong, China"}
 all_countries["name"] = all_countries.apply(lambda r: _name_overrides.get(r["iso3"], r.get("name", r["iso3"])), axis=1)
 
 all_countries["has_data_temp"] = all_countries["iso3"].isin(iso_temp)
@@ -390,7 +396,14 @@ fig.update_layout(margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)", p
              fitbounds="locations" if st.session_state["region_scope"]!="World" else None,
              lataxis_range=[-60,85] if st.session_state["region_scope"]=="World" else None))
 st.markdown('<div class="full-bleed">', unsafe_allow_html=True)
-events = plotly_events(fig, click_event=True, hover_event=False, override_height=map_h, override_width="100%")
+
+if plotly_events is not None:
+    events = plotly_events(fig, click_event=True, hover_event=False, override_height=map_h, override_width="100%")
+else:
+    # Fallback: show the map without click interactivity (prevents EOF on missing component)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    events = []
+
 st.markdown('</div>', unsafe_allow_html=True)
 
 clicked_iso3 = None
