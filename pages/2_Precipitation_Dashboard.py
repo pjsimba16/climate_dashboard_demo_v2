@@ -1,10 +1,17 @@
 # pages/2_Precipitation_Dashboard.py
 import os
+import json
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-import geopandas as gpd
+
+# SAFE: avoid hard dependency at import time
+try:
+    import geopandas as gpd
+except Exception:
+    gpd = None
+
 import streamlit as st
 from huggingface_hub import hf_hub_download
 
@@ -24,7 +31,7 @@ except Exception:
 st.set_page_config(page_title="Precipitation Dashboard", layout="wide", initial_sidebar_state="collapsed")
 
 # ====== SWITCH THIS WHEN READY ======
-GEOJSON_SOURCE = "Hugging Face"   # change to "Hugging Face" after upload
+GEOJSON_SOURCE = "Hugging Face"
 # ====================================
 
 # One-time note about caching
@@ -68,7 +75,6 @@ def display_country_name(iso: str) -> str:
     iso = (iso or "").upper().strip()
     if iso in _CUSTOM_COUNTRY_DISPLAY:
         return _CUSTOM_COUNTRY_DISPLAY[iso]
-    # fall back to pycountry -> e.g., "France", "Philippines"
     return iso3_to_name(iso)
 
 
@@ -96,21 +102,32 @@ def read_parquet_from_hf(filename: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=7*24*3600, show_spinner=False)
 def load_country_adm1_geojson(iso3: str, source: str):
+    """
+    Returns (geojson_dict, bounds_or_none, n_features).
+    """
     if source == "Hugging Face":
         path = _dl(f"ADM1_geodata/{iso3}.geojson")
     else:
         path = os.path.join("ADM1_geodata", f"{iso3}.geojson")
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Local GeoJSON not found at {path}")
-    gdf = gpd.read_file(path)
-    try:
-        gdf["geometry"] = gdf["geometry"].buffer(0)
-    except Exception:
-        pass
-    gdf = gdf.to_crs(4326)
-    bounds = tuple(gdf.total_bounds)
-    n_features = len(gdf)
-    return gdf.__geo_interface__, bounds, n_features
+
+    if gpd is not None:
+        gdf = gpd.read_file(path)
+        try:
+            gdf["geometry"] = gdf["geometry"].buffer(0)
+        except Exception:
+            pass
+        gdf = gdf.to_crs(4326)
+        bounds = tuple(gdf.total_bounds)
+        n_features = len(gdf)
+        return gdf.__geo_interface__, bounds, n_features
+
+    # Fallback: pure JSON (no shapely/gdal). We won't compute bounds.
+    with open(path, "r", encoding="utf-8") as f:
+        gj = json.load(f)
+    n_features = len(gj.get("features", []))
+    return gj, None, n_features
 
 # Percentile helper (cached)
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -125,10 +142,6 @@ def percentile_series_cached(df_dates: pd.Series, df_values: pd.Series, pct: int
 
 # Compact Plotly percentile selector (no 'config=' to support older component versions)
 def percentile_selector_plotly(state_key: str, default_val: int = 50, height: int = 72, width: int = 520) -> int:
-    """
-    Compact 10-box selector (10..100). One click updates the selected box color
-    and, via fragment, re-renders only the percentile block.
-    """
     values = [10,20,30,40,50,60,70,80,90,100]
     if state_key not in st.session_state:
         st.session_state[state_key] = default_val
@@ -138,7 +151,6 @@ def percentile_selector_plotly(state_key: str, default_val: int = 50, height: in
     x = list(range(len(values)))
     y = [0]*len(values)
 
-    # Pre-color with current selection
     fill_colors = ["#2563eb" if v == current else "#e2e8f0" for v in values]
     line_colors = ["#1d4ed8" if v == current else "#94a3b8" for v in values]
 
@@ -147,26 +159,14 @@ def percentile_selector_plotly(state_key: str, default_val: int = 50, height: in
         x=x, y=y, mode="markers+text",
         text=[str(v) for v in values],
         textposition="middle center",
-        marker=dict(
-            symbol="square",
-            size=28,  # compact boxes
-            color=fill_colors,
-            line=dict(width=2, color=line_colors)
-        ),
+        marker=dict(symbol="square", size=28, color=fill_colors, line=dict(width=2, color=line_colors)),
         hovertemplate="<b>%{text}th percentile</b><extra></extra>",
         name="percentiles"
     ))
-    # Tight layout so boxes sit side-by-side with minimal whitespace
     fig.update_xaxes(visible=False, range=[-0.5, len(values)-0.5], fixedrange=True, constrain="domain")
     fig.update_yaxes(visible=False, range=[-1, 1], fixedrange=True, scaleanchor="x", scaleratio=1)
-    fig.update_layout(
-        height=height,
-        margin=dict(l=0, r=0, t=0, b=0),
-        dragmode=False,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        showlegend=False
-    )
+    fig.update_layout(height=height, margin=dict(l=0, r=0, t=0, b=0), dragmode=False,
+                      plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
 
     st.write("Select percentile")
     if plotly_events is None:
@@ -174,20 +174,15 @@ def percentile_selector_plotly(state_key: str, default_val: int = 50, height: in
         st.plotly_chart(fig, use_container_width=False)
         return current
 
-    # Render ONCE through the component (avoid duplicate rows)
-    events = plotly_events(
-        fig,
-        click_event=True, hover_event=False, select_event=False,
-        override_height=height, override_width=width,
-        key=f"{state_key}_events"
-    )
+    events = plotly_events(fig, click_event=True, hover_event=False, select_event=False,
+                           override_height=height, override_width=width, key=f"{state_key}_events")
     if events:
         idx = events[0].get("pointIndex")
         if isinstance(idx, int) and 0 <= idx < len(values):
             new_val = values[idx]
             if new_val != current:
                 st.session_state[state_key] = new_val
-                st.rerun()  # recolors boxes + refreshes only the fragment
+                st.rerun()
 
     return st.session_state[state_key]
 
@@ -264,7 +259,6 @@ with lc:
                 with st.spinner("Loading map & drawing choropleth…"):
                     try:
                         geojson_dict, bounds, n_features = load_country_adm1_geojson(iso3, GEOJSON_SOURCE)
-                        minx, miny, maxx, maxy = bounds
 
                         fig_city = px.choropleth(
                             df_map,
@@ -275,15 +269,19 @@ with lc:
                             projection="mercator",
                             color_continuous_scale="YlGnBu"
                         )
-                        pad = 0.35
-                        fig_city.update_geos(
+                        geokw = dict(
                             projection_type="mercator",
                             fitbounds="locations",
-                            lonaxis_range=[minx - pad, maxx + pad],
-                            lataxis_range=[miny - pad, maxy + pad],
                             showland=False, showcountries=False, showcoastlines=False,
                             showocean=False, visible=False
                         )
+                        if bounds is not None and isinstance(bounds, tuple) and len(bounds) == 4:
+                            minx, miny, maxx, maxy = bounds
+                            pad = 0.35
+                            geokw.update(lonaxis_range=[minx - pad, maxx + pad],
+                                         lataxis_range=[miny - pad, maxy + pad])
+
+                        fig_city.update_geos(**geokw)
                         fig_city.update_layout(
                             margin=dict(l=0, r=0, t=0, b=0),
                             height=MAP_HEIGHT,
@@ -294,17 +292,18 @@ with lc:
                             coloraxis_colorbar=dict(title="Precipitation")
                         )
                         df_map["_date_str"] = df_map["Date"].dt.strftime("%Y-%m")
-                        fig_city.data[0].customdata = np.stack(
-                            [df_map["City"].values,
-                             df_map["Precipitation (Sum)"].values,
-                             df_map["_date_str"].values],
-                            axis=-1
-                        )
-                        fig_city.data[0].hovertemplate = (
-                            "<b>%{customdata[0]}</b><br>"
-                            "Latest: %{customdata[1]:.1f} mm<br>"
-                            "As of: %{customdata[2]}<extra></extra>"
-                        )
+                        if len(fig_city.data) > 0:
+                            fig_city.data[0].customdata = np.stack(
+                                [df_map["City"].values,
+                                 df_map["Precipitation (Sum)"].values,
+                                 df_map["_date_str"].values],
+                                axis=-1
+                            )
+                            fig_city.data[0].hovertemplate = (
+                                "<b>%{customdata[0]}</b><br>"
+                                "Latest: %{customdata[1]:.1f} mm<br>"
+                                "As of: %{customdata[2]}<extra></extra>"
+                            )
                         fig_city.update_traces(marker_line_width=0.3, marker_line_color="#999")
                         st.plotly_chart(fig_city, use_container_width=True, config={"displayModeBar": False})
 
@@ -409,7 +408,7 @@ with rc:
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:-.35rem; margin-bottom:.7rem;">
           <span style="font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid #cbd5e1;color:#334155;">Data: {source}</span>
           <span style="font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid #cbd5e1;color:#334155;">Frequency: {freq}</span>
-          <span style="font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid #cbd5e1;color:#334155;">Type: {"Historical" if data_type.startswith("Historical") else "Projections"}</span>
+          <span style="font-size:12px;padding:4px 8px;border:1px solid #cbd5e1;color:#334155;">Type: {"Historical" if data_type.startswith("Historical") else "Projections"}</span>
         </div>
         """,
         unsafe_allow_html=True
@@ -484,7 +483,6 @@ with rc:
         dprev = f"{(latest - prev):+0.1f} mm" if np.isfinite(prev) and np.isfinite(latest) else "—"
         st.metric("Δ vs previous point", dprev,
                   help="Change from the immediately previous data point (e.g., previous month).")
-    # Δ vs same month last year
     yoy_delta = "—"
     if not series.empty:
         last_date = pd.to_datetime(series["date"].iloc[-1])
