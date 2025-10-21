@@ -1,10 +1,17 @@
 # pages/1_Temperature_Dashboard.py
 import os
+import json
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-import geopandas as gpd
+
+# SAFE: avoid hard dependency at import time
+try:
+    import geopandas as gpd
+except Exception:
+    gpd = None
+
 import streamlit as st
 from huggingface_hub import hf_hub_download
 
@@ -24,9 +31,7 @@ except Exception:
 st.set_page_config(page_title="Temperature Dashboard", layout="wide", initial_sidebar_state="collapsed")
 
 # ====== SWITCH THIS WHEN READY ======
-# "Local" -> read ADM1_geodata/{ISO3}.geojson from disk
-# "Hugging Face" -> read from your HF Space (cached)
-GEOJSON_SOURCE = "Hugging Face"   # change to "Hugging Face" after upload
+GEOJSON_SOURCE = "Hugging Face"
 # ====================================
 
 # One-time note about caching
@@ -63,7 +68,7 @@ def iso3_to_name(iso: str) -> str:
 # Custom display names for specific ISO3s
 _CUSTOM_COUNTRY_DISPLAY = {
     "CHN": "People's Republic of China",
-    "TWN": "Taipei,China",        
+    "TWN": "Taipei,China",
     "HKG": "Hong Kong, China",
 }
 
@@ -71,9 +76,7 @@ def display_country_name(iso: str) -> str:
     iso = (iso or "").upper().strip()
     if iso in _CUSTOM_COUNTRY_DISPLAY:
         return _CUSTOM_COUNTRY_DISPLAY[iso]
-    # fall back to pycountry -> e.g., "France", "Philippines"
     return iso3_to_name(iso)
-
 
 def _secret_or_env(key: str, default: str = "") -> str:
     try:
@@ -102,7 +105,8 @@ def read_parquet_from_hf(filename: str) -> pd.DataFrame:
 @st.cache_data(ttl=7*24*3600, show_spinner=False)
 def load_country_adm1_geojson(iso3: str, source: str):
     """
-    Load ADM1 GeoJSON once per (iso3, source). Returns (geojson_dict, bounds, n_features).
+    Load ADM1 GeoJSON once per (iso3, source).
+    Returns (geojson_dict, bounds_or_none, n_features).
     """
     if source == "Hugging Face":
         path = _dl(f"ADM1_geodata/{iso3}.geojson")
@@ -110,15 +114,24 @@ def load_country_adm1_geojson(iso3: str, source: str):
         path = os.path.join("ADM1_geodata", f"{iso3}.geojson")
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Local GeoJSON not found at {path}")
-    gdf = gpd.read_file(path)
-    try:
-        gdf["geometry"] = gdf["geometry"].buffer(0)
-    except Exception:
-        pass
-    gdf = gdf.to_crs(4326)
-    bounds = tuple(gdf.total_bounds)
-    n_features = len(gdf)
-    return gdf.__geo_interface__, bounds, n_features
+
+    # Preferred path: GeoPandas (if available)
+    if gpd is not None:
+        gdf = gpd.read_file(path)
+        try:
+            gdf["geometry"] = gdf["geometry"].buffer(0)
+        except Exception:
+            pass
+        gdf = gdf.to_crs(4326)
+        bounds = tuple(gdf.total_bounds)
+        n_features = len(gdf)
+        return gdf.__geo_interface__, bounds, n_features
+
+    # Fallback: pure JSON (no shapely/gdal). We won't compute bounds.
+    with open(path, "r", encoding="utf-8") as f:
+        gj = json.load(f)
+    n_features = len(gj.get("features", []))
+    return gj, None, n_features
 
 # Percentile helper — cache the computation so changing the percentile is snappy
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -134,11 +147,6 @@ def percentile_series_cached(df_dates: pd.Series, df_values: pd.Series, pct: int
 
 # Plotly-based percentile selector (10 square boxes) — single render, single click
 def percentile_selector_plotly(state_key: str, default_val: int = 50, height: int = 72, width: int = 520) -> int:
-    """
-    Compact 10-box selector (10..100). One click updates the selected box color
-    and, via fragment, re-renders only the percentile block.
-    Compatible with older streamlit-plotly-events (no `config=` param).
-    """
     values = [10,20,30,40,50,60,70,80,90,100]
     if state_key not in st.session_state:
         st.session_state[state_key] = default_val
@@ -148,7 +156,6 @@ def percentile_selector_plotly(state_key: str, default_val: int = 50, height: in
     x = list(range(len(values)))
     y = [0]*len(values)
 
-    # Pre-color with current selection
     fill_colors = ["#2563eb" if v == current else "#e2e8f0" for v in values]
     line_colors = ["#1d4ed8" if v == current else "#94a3b8" for v in values]
 
@@ -157,52 +164,31 @@ def percentile_selector_plotly(state_key: str, default_val: int = 50, height: in
         x=x, y=y, mode="markers+text",
         text=[str(v) for v in values],
         textposition="middle center",
-        marker=dict(
-            symbol="square",
-            size=28,  # compact boxes
-            color=fill_colors,
-            line=dict(width=2, color=line_colors)
-        ),
+        marker=dict(symbol="square", size=28, color=fill_colors, line=dict(width=2, color=line_colors)),
         hovertemplate="<b>%{text}th percentile</b><extra></extra>",
         name="percentiles"
     ))
-
-    # Tight layout so boxes sit side-by-side with minimal whitespace
     fig.update_xaxes(visible=False, range=[-0.5, len(values)-0.5], fixedrange=True, constrain="domain")
     fig.update_yaxes(visible=False, range=[-1, 1], fixedrange=True, scaleanchor="x", scaleratio=1)
-    fig.update_layout(
-        height=height,
-        margin=dict(l=0, r=0, t=0, b=0),
-        dragmode=False,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        showlegend=False
-    )
+    fig.update_layout(height=height, margin=dict(l=0, r=0, t=0, b=0), dragmode=False,
+                      plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
 
     st.write("Select percentile")
 
-    # If the component isn't installed, show a static fallback (no interaction)
     if plotly_events is None:
         st.warning("Install `streamlit-plotly-events` to enable the fast percentile selector.", icon="⚠️")
         st.plotly_chart(fig, use_container_width=False)
         return current
 
-    # Render ONCE through the component (no st.plotly_chart here to avoid double rows)
-    events = plotly_events(
-        fig,
-        click_event=True, hover_event=False, select_event=False,
-        override_height=height, override_width=width,
-        key=f"{state_key}_events"
-    )
-
-    # Single click: update state and trigger a small rerun (fragment confines the work)
+    events = plotly_events(fig, click_event=True, hover_event=False, select_event=False,
+                           override_height=height, override_width=width, key=f"{state_key}_events")
     if events:
         idx = events[0].get("pointIndex")
         if isinstance(idx, int) and 0 <= idx < len(values):
             new_val = values[idx]
             if new_val != current:
                 st.session_state[state_key] = new_val
-                st.rerun()  # recolors the boxes and refreshes only the percentile fragment
+                st.rerun()
 
     return st.session_state[state_key]
 
@@ -281,7 +267,6 @@ with lc:
                 with st.spinner("Loading map & drawing choropleth…"):
                     try:
                         geojson_dict, bounds, n_features = load_country_adm1_geojson(iso3, GEOJSON_SOURCE)
-                        minx, miny, maxx, maxy = bounds
 
                         fig_city = px.choropleth(
                             df_map,
@@ -292,15 +277,20 @@ with lc:
                             projection="mercator",
                             color_continuous_scale="YlOrRd"
                         )
-                        pad = 0.35
-                        fig_city.update_geos(
+                        # Use bounds only if available; otherwise rely on fitbounds only
+                        geokw = dict(
                             projection_type="mercator",
                             fitbounds="locations",
-                            lonaxis_range=[minx - pad, maxx + pad],
-                            lataxis_range=[miny - pad, maxy + pad],
                             showland=False, showcountries=False, showcoastlines=False,
                             showocean=False, visible=False
                         )
+                        if bounds is not None and isinstance(bounds, tuple) and len(bounds) == 4:
+                            minx, miny, maxx, maxy = bounds
+                            pad = 0.35
+                            geokw.update(lonaxis_range=[minx - pad, maxx + pad],
+                                         lataxis_range=[miny - pad, maxy + pad])
+
+                        fig_city.update_geos(**geokw)
                         fig_city.update_layout(
                             margin=dict(l=0, r=0, t=0, b=0),
                             height=MAP_HEIGHT,
@@ -311,17 +301,18 @@ with lc:
                             coloraxis_colorbar=dict(title="Temperature")
                         )
                         df_map["_date_str"] = df_map["Date"].dt.strftime("%Y-%m")
-                        fig_city.data[0].customdata = np.stack(
-                            [df_map["City"].values,
-                             df_map["Temperature (Mean)"].values,
-                             df_map["_date_str"].values],
-                            axis=-1
-                        )
-                        fig_city.data[0].hovertemplate = (
-                            "<b>%{customdata[0]}</b><br>"
-                            "Latest: %{customdata[1]:.2f} °C<br>"
-                            "As of: %{customdata[2]}<extra></extra>"
-                        )
+                        if len(fig_city.data) > 0:
+                            fig_city.data[0].customdata = np.stack(
+                                [df_map["City"].values,
+                                 df_map["Temperature (Mean)"].values,
+                                 df_map["_date_str"].values],
+                                axis=-1
+                            )
+                            fig_city.data[0].hovertemplate = (
+                                "<b>%{customdata[0]}</b><br>"
+                                "Latest: %{customdata[1]:.2f} °C<br>"
+                                "As of: %{customdata[2]}<extra></extra>"
+                            )
                         fig_city.update_traces(marker_line_width=0.3, marker_line_color="#999")
                         st.plotly_chart(fig_city, use_container_width=True, config={"displayModeBar": False})
 
@@ -564,7 +555,6 @@ with rc:
     def _percentile_block():
         pct = percentile_selector_plotly("opt_pct_t", 50)
 
-        # Cached percentile charts
         def percentile_chart(title_base: str, s: pd.DataFrame, color_key="green", ylab="°C"):
             ps = percentile_series_cached(s["date"], s["avg"], pct)
             if ps.empty:
