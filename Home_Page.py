@@ -9,14 +9,12 @@ import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px  # for continent lookup & hist
 import streamlit.components.v1 as components
+from huggingface_hub import hf_hub_download
 
-# SAFE: guard optional component (avoid EOF on missing wheel)
 try:
     from streamlit_plotly_events import plotly_events
 except Exception:
-    plotly_events = None
-
-from huggingface_hub import hf_hub_download
+    plotly_events = None  # fall back: we won't use the fast click capture on Home
 
 # Prefer the user's local timezone (Asia/Manila) for the "Last Update" badge
 try:
@@ -32,7 +30,7 @@ except Exception:
     pycountry = None
 
 st.set_page_config(
-    page_title="Home Page — Global Database of Subnational Climate Indicators",
+    page_title="Home Page - Global Database of Subnational Climate Indicators",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -218,8 +216,8 @@ else:
 
 all_countries["iso3"] = all_countries["iso3"].astype(str).str.upper().str.strip()
 
-# Name remaps (standardized)
-_name_overrides = {"CHN": "People's Republic of China", "TWN": "Taipei,China", "HKG": "Hong Kong, China"}
+# Name remaps
+_name_overrides = {"CHN": "People's Republic of China", "TWN": "Taipe, China", "HKG": "Hong Kong, China"}
 all_countries["name"] = all_countries.apply(lambda r: _name_overrides.get(r["iso3"], r.get("name", r["iso3"])), axis=1)
 
 all_countries["has_data_temp"] = all_countries["iso3"].isin(iso_temp)
@@ -276,8 +274,9 @@ st.markdown("<h1 style='text-align:center'>Global Database of Subnational Climat
 st.markdown("<div class='subtitle'>Built and Maintained by Roshen Fernando and Patrick Jaime Simba</div>", unsafe_allow_html=True)
 st.divider()
 
-# ---------- HERO ----------
-st.markdown(f"""
+# ===== HERO (original text + badges INSIDE) =====
+st.markdown(
+    f"""
 <div class="hero">
   <h2>🌍 Explore subnational climate indicators worldwide</h2>
   <p>Click a country on the map to open its dashboard, or use Quick search to jump directly.</p>
@@ -286,7 +285,99 @@ st.markdown(f"""
     <span class="badge" style="margin-left:6px;">Last Update: <b>{_now_label()}</b></span>
   </div>
 </div>
+""",
+    unsafe_allow_html=True,
+)
+# ===== END HERO =====
+
+# ===== CTA (left-aligned; colored button; helper badge next to button; minimal spacing) =====
+st.markdown("""
+<style>
+/* tighten gap below hero banner */
+.hero { margin-bottom: 0.25px !important; }
+
+/* CTA row spacing (trim top/bottom padding from columns too) */
+.cta-row { margin-top: -5 !important; margin-bottom: 0px !important; }
+.cta-row [data-testid="column"] { padding-top: 0 !important; padding-bottom: 0 !important; }
+
+/* Color ONLY the Streamlit button inside this row (robust selectors) */
+.cta-row div.stButton > button,
+.cta-row button[kind="primary"],
+.cta-row [data-testid="baseButton-secondary"] {
+  background-color:#eb5c56 !important;
+  color:#ffffff !important;
+  border:0 !important;
+  font-weight:600;
+  padding:0.34rem 0.9rem !important;
+  border-radius:10px !important;
+  box-shadow:none !important;
+}
+.cta-row div.stButton > button:hover { background-color:#d24f49 !important; }
+
+/* Helper badge with hover popup, sits right of the button */
+.badge-help{
+  display:inline-flex; align-items:center; gap:6px;
+  background:#f1f3f5; border:1px solid #e1e4e8; border-radius:999px;
+  padding:2px 10px; font-size:.85rem; cursor:help; position:relative; white-space:nowrap;
+}
+.badge-help .q{ font-weight:700; }
+.badge-help .tip{
+  display:none; position:absolute; left:0; top:calc(100% + 8px);
+  background:#ffffff; border:1px solid #e1e4e8; border-radius:10px;
+  padding:10px 12px; width:320px; box-shadow:0 6px 18px rgba(0,0,0,0.08); z-index:20;
+}
+.badge-help:hover .tip{ display:block; }
+
+/* caption under the row, tight */
+.cta-caption { margin-top: -18px !important; margin-bottom: 0px !important; color:#5a5a5a; font-size:0.92rem; text-align:left; }
+
+/* ===== OVERRIDES to enlarge tooltip & prevent clipping (added) ===== */
+.cta-row, .cta-row [data-testid="column"] { overflow: visible !important; }
+.badge-help .tip{
+  width: 420px;                         /* wider popup */
+  max-width: min(90vw, 520px);          /* responsive guard */
+  white-space: normal;                  /* allow wrapping */
+  word-break: break-word;               /* break long tokens if needed */
+  overflow-wrap: anywhere;              /* modern wrapping */
+  padding:12px 14px;                    /* a touch more padding */
+  box-shadow:0 8px 22px rgba(0,0,0,0.10);
+  z-index: 1000;                        /* keep above nearby elements */
+}
+</style>
 """, unsafe_allow_html=True)
+
+# Button + helper badge on the SAME LEFT-ALIGNED ROW
+st.markdown("<div class='cta-row'>", unsafe_allow_html=True)
+c_btn, c_help, _ = st.columns([0.28, 2.15, 0.56], gap="small")  # adjust widths to nudge spacing
+with c_btn:
+    if st.button("📈 Generate a custom chart", key="hero_custom_chart"):
+        st.switch_page("pages/0_Custom_Chart.py")
+with c_help:
+    st.markdown(
+        """
+        <span class='badge-help' aria-label='Helper' role='note'>
+          <span class='q'>?</span>
+          <span class='tip'>
+            <b>Custom Chart Builder</b><br/>
+            • Choose chart type (Line/Area/Bar/Scatter/Anomaly)<br/>
+            • Mix countries & ADM1s; facet by indicator or geography<br/>
+            • Select date ranges (quick “last N years”) & frequency<br/>
+            • Optional smoothing, normalization, climatology overlay<br/>
+            • Export chart (PNG) and clean data (CSV)
+          </span>
+        </span>
+        """,
+        unsafe_allow_html=True,
+    )
+st.markdown("</div>", unsafe_allow_html=True)
+
+# Tight caption directly under the row
+st.markdown(
+    "<div class='cta-caption'>Create bespoke charts across countries and ADM1s, compare indicators, "
+    "combine countries/ADM1s, facet, smooth, normalize and export.</div>",
+    unsafe_allow_html=True,
+)
+# ===== END CTA =====
 
 # ---------- FIRST-LOAD CACHE HINT ----------
 if "first_load_hint" not in st.session_state:
@@ -396,14 +487,7 @@ fig.update_layout(margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)", p
              fitbounds="locations" if st.session_state["region_scope"]!="World" else None,
              lataxis_range=[-60,85] if st.session_state["region_scope"]=="World" else None))
 st.markdown('<div class="full-bleed">', unsafe_allow_html=True)
-
-if plotly_events is not None:
-    events = plotly_events(fig, click_event=True, hover_event=False, override_height=map_h, override_width="100%")
-else:
-    # Fallback: show the map without click interactivity (prevents EOF on missing component)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-    events = []
-
+events = plotly_events(fig, click_event=True, hover_event=False, override_height=map_h, override_width="100%")
 st.markdown('</div>', unsafe_allow_html=True)
 
 clicked_iso3 = None
