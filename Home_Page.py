@@ -274,110 +274,66 @@ st.markdown("<h1 style='text-align:center'>Global Database of Subnational Climat
 st.markdown("<div class='subtitle'>Built and Maintained by Roshen Fernando and Patrick Jaime Simba</div>", unsafe_allow_html=True)
 st.divider()
 
-# ===== HERO (original text + badges INSIDE) =====
-st.markdown(
-    f"""
-<div class="hero">
-  <h2>🌍 Explore subnational climate indicators worldwide</h2>
-  <p>Click a country on the map to open its dashboard, or use Quick search to jump directly.</p>
-  <div style="margin-top:.25rem;">
-    <span class="badge">Data through: <b>{fresh_label}</b></span>
-    <span class="badge" style="margin-left:6px;">Last Update: <b>{_now_label()}</b></span>
-  </div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-# ===== END HERO =====
-
-# ===== CTA (left-aligned; colored button; helper badge next to button; minimal spacing) =====
+# ===== SPLIT HERO (cross-browser banners; no :has()) =====
+# --- styles for the left hero panel ---
 st.markdown("""
 <style>
-/* tighten gap below hero banner */
-.hero { margin-bottom: 0.25px !important; }
-
-/* CTA row spacing (trim top/bottom padding from columns too) */
-.cta-row { margin-top: -5 !important; margin-bottom: 0px !important; }
-.cta-row [data-testid="column"] { padding-top: 0 !important; padding-bottom: 0 !important; }
-
-/* Color ONLY the Streamlit button inside this row (robust selectors) */
-.cta-row div.stButton > button,
-.cta-row button[kind="primary"],
-.cta-row [data-testid="baseButton-secondary"] {
-  background-color:#eb5c56 !important;
-  color:#ffffff !important;
-  border:0 !important;
-  font-weight:600;
-  padding:0.34rem 0.9rem !important;
-  border-radius:10px !important;
-  box-shadow:none !important;
+/* bullet-proof tinted fill that ignores external backgrounds */
+.panel-left{
+  position: relative;
+  border: 1px solid rgba(235,92,86,0.25);
+  border-radius:16px;
+  padding:16px 18px;
+  margin-bottom:10px;
+  background: transparent !important;  /* neutralize white fills */
+  overflow: hidden;                     /* keep rounded corners */
 }
-.cta-row div.stButton > button:hover { background-color:#d24f49 !important; }
-
-/* Helper badge with hover popup, sits right of the button */
-.badge-help{
-  display:inline-flex; align-items:center; gap:6px;
-  background:#f1f3f5; border:1px solid #e1e4e8; border-radius:999px;
-  padding:2px 10px; font-size:.85rem; cursor:help; position:relative; white-space:nowrap;
+.panel-left::before{
+  content:"";
+  position:absolute;
+  inset:0;                              /* top/right/bottom/left: 0 */
+  background: rgba(235,92,86,0.06);     /* <— change shade here */
+  border-radius: inherit;
+  z-index: 0;
 }
-.badge-help .q{ font-weight:700; }
-.badge-help .tip{
-  display:none; position:absolute; left:0; top:calc(100% + 8px);
-  background:#ffffff; border:1px solid #e1e4e8; border-radius:10px;
-  padding:10px 12px; width:320px; box-shadow:0 6px 18px rgba(0,0,0,0.08); z-index:20;
-}
-.badge-help:hover .tip{ display:block; }
-
-/* caption under the row, tight */
-.cta-caption { margin-top: -18px !important; margin-bottom: 0px !important; color:#5a5a5a; font-size:0.92rem; text-align:left; }
-
-/* ===== OVERRIDES to enlarge tooltip & prevent clipping (added) ===== */
-.cta-row, .cta-row [data-testid="column"] { overflow: visible !important; }
-.badge-help .tip{
-  width: 420px;                         /* wider popup */
-  max-width: min(90vw, 520px);          /* responsive guard */
-  white-space: normal;                  /* allow wrapping */
-  word-break: break-word;               /* break long tokens if needed */
-  overflow-wrap: anywhere;              /* modern wrapping */
-  padding:12px 14px;                    /* a touch more padding */
-  box-shadow:0 8px 22px rgba(0,0,0,0.10);
-  z-index: 1000;                        /* keep above nearby elements */
-}
+/* ensure content sits above the background layer */
+.panel-left > *{ position: relative; z-index: 1; }
 </style>
 """, unsafe_allow_html=True)
 
-# Button + helper badge on the SAME LEFT-ALIGNED ROW
-st.markdown("<div class='cta-row'>", unsafe_allow_html=True)
-c_btn, c_help, _ = st.columns([0.28, 2.15, 0.56], gap="small")  # adjust widths to nudge spacing
-with c_btn:
+
+left, right = st.columns([0.62, 0.38], gap="large")
+
+# LEFT: render the entire hero as ONE html block (works everywhere)
+with left:
+    st.markdown(
+        f"""
+        <div class="panel-left">
+          <h2>🌍 Explore subnational climate indicators worldwide</h2>
+          <p>Click a country on the map to open its dashboard, or use Quick search to jump directly.</p>
+          <div class="badgerow">
+            <span class="badge">Data through: <b>{fresh_label}</b></span>
+            <span class="badge" style="margin-left:6px;">Last Update: <b>{_now_label()}</b></span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+# RIGHT: keep your existing caption + button code (widgets need native Streamlit)
+with right:
+    st.subheader("Custom Chart Builder")
+    st.write(
+        "Create bespoke charts across countries and ADM1s, compare indicators, "
+        "combine countries/ADM1s, facet, smooth, normalize and export."
+    )
     if st.button("📈 Generate a custom chart", key="hero_custom_chart"):
         st.switch_page("pages/0_Custom_Chart.py")
-with c_help:
-    st.markdown(
-        """
-        <span class='badge-help' aria-label='Helper' role='note'>
-          <span class='q'>?</span>
-          <span class='tip'>
-            <b>Custom Chart Builder</b><br/>
-            • Choose chart type (Line/Area/Bar/Scatter/Anomaly)<br/>
-            • Mix countries & ADM1s; facet by indicator or geography<br/>
-            • Select date ranges (quick “last N years”) & frequency<br/>
-            • Optional smoothing, normalization, climatology overlay<br/>
-            • Export chart (PNG) and clean data (CSV)
-          </span>
-        </span>
-        """,
-        unsafe_allow_html=True,
-    )
-st.markdown("</div>", unsafe_allow_html=True)
+    st.caption("Starts a flexible chart workspace with export options.")
 
-# Tight caption directly under the row
-st.markdown(
-    "<div class='cta-caption'>Create bespoke charts across countries and ADM1s, compare indicators, "
-    "combine countries/ADM1s, facet, smooth, normalize and export.</div>",
-    unsafe_allow_html=True,
-)
-# ===== END CTA =====
+# ===== END SPLIT HERO =====
+
 
 # ---------- FIRST-LOAD CACHE HINT ----------
 if "first_load_hint" not in st.session_state:
