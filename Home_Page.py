@@ -11,10 +11,11 @@ import plotly.express as px  # for continent lookup & hist
 import streamlit.components.v1 as components
 from huggingface_hub import hf_hub_download
 
+# Optional: fast click events (falls back gracefully)
 try:
     from streamlit_plotly_events import plotly_events
 except Exception:
-    plotly_events = None  # fall back: we won't use the fast click capture on Home
+    plotly_events = None
 
 # Prefer the user's local timezone (Asia/Manila) for the "Last Update" badge
 try:
@@ -30,49 +31,44 @@ except Exception:
     pycountry = None
 
 st.set_page_config(
-    page_title="Home Page - Global Database of Subnational Climate Indicators",
+    page_title="Home Page — Global Database of Subnational Climate Indicators",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# ---------- global styles ----------
+# ---------- Styles ----------
 st.markdown("""
 <style>
-:root { --muted:#64748b; --muted2:#475569; }
+:root { --muted:#64748b; }
 h1, h2, h3 { letter-spacing:.2px; }
-.subtitle { text-align:center; color:var(--muted); margin-top:-.4rem; }
-.card {
-  border:1px solid #e5e7eb; border-radius:14px; padding:12px 14px; background:#fafafa;
-}
-.hero {
-  padding:12px 16px; border:1px solid #e5e7eb; border-radius:14px; background:#f8fafc;
-  margin-bottom:.75rem;
-}
-.badge {
-  padding:4px 8px; border-radius:999px; background:#eef2ff; border:1px solid #e0e7ff; font-size:12px;
-}
-.footer-box {
-  padding:16px; border-top:1px solid #e5e7eb; margin-top:1rem; color:var(--muted);
-}
+.subtitle { text-align:center; color:#64748b; margin-top:-.4rem; }
+.card { border:1px solid #e5e7eb; border-radius:14px; padding:12px 14px; background:#fafafa; }
+.hero { padding:12px 16px; border:1px solid #e5e7eb; border-radius:14px; background:#f8fafc; margin-bottom:.75rem; }
+.badge { padding:4px 8px; border-radius:999px; background:#eef2ff; border:1px solid #e0e7ff; font-size:12px; }
+.footer-box { padding:16px; border-top:1px solid #e5e7eb; margin-top:1rem; color:#64748b; }
 .full-bleed { width: 100vw; margin-left: calc(-50vw + 50%); }
 @media (min-width: 1400px) {
   [data-testid="stAppViewContainer"] .main .block-container { padding-left: .5rem; padding-right: .5rem; }
 }
-.legend-chip {
-  display:inline-flex; align-items:center; gap:8px;
-  background:rgba(255,255,255,0.9); border:1px solid #e5e7eb;
-  border-radius:10px; padding:6px 10px; font-size:12px;
-}
+.legend-chip { display:inline-flex; align-items:center; gap:8px;
+  background:rgba(255,255,255,0.9); border:1px solid #e5e7eb; border-radius:10px; padding:6px 10px; font-size:12px; }
 .legend-swatch { display:inline-block; width:10px; height:10px; background:#12a39a; border:1px solid rgba(0,0,0,.25); }
 .align-with-input { height: 1.9rem; }
 [data-testid="stPlotlyChart"] div, [data-testid="stPlotlyChart"] canvas { border-radius: 0 !important; }
 .uc-card { border:1px solid #e5e7eb; border-radius:14px; padding:12px; background:white; height:100%; }
 .uc-card h4 { margin:0 0 .25rem 0; font-size:16px; }
 .uc-card p { margin:.15rem 0 0 0; font-size:13px; color:#475569; }
+/* Subtle tinted hero-left panel */
+.panel-left{
+  position: relative; border: 1px solid rgba(235,92,86,0.25);
+  border-radius:16px; padding:16px 18px; margin-bottom:10px; background: transparent !important; overflow: hidden;
+}
+.panel-left::before{ content:""; position:absolute; inset:0; background: rgba(235,92,86,0.06); border-radius: inherit; z-index: 0; }
+.panel-left > *{ position: relative; z-index: 1; }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- secrets / env ----------
+# ---------- Secrets / env ----------
 def _secret_or_env(key: str, default: str = "") -> str:
     try:
         if hasattr(st, "secrets") and key in st.secrets:
@@ -118,7 +114,7 @@ def _read_any_table(p: Path) -> pd.DataFrame:
         return pd.read_parquet(p)
     return pd.read_csv(p)
 
-# ---------- availability snapshot ----------
+# ---------- Availability snapshot ----------
 @st.cache_data(ttl=24*3600, show_spinner=False)
 def _read_availability_snapshot_local() -> Optional[pd.DataFrame]:
     here = Path(__file__).parent.resolve()
@@ -150,7 +146,7 @@ def _load_availability_snapshot() -> Optional[pd.DataFrame]:
         return snap
     return None
 
-# ---------- city-level core (for freshness badge) ----------
+# ---------- City-level core (for freshness badge) ----------
 @st.cache_data(ttl=24*3600, show_spinner=False)
 def _load_core_city_parquets():
     try:
@@ -175,13 +171,14 @@ def _global_latest_month() -> Optional[pd.Timestamp]:
         return None
     return max(dates)
 
-# ---------- load country coverage ----------
+# ---------- Load country coverage ----------
 snap = _load_availability_snapshot()
 if snap is not None and {"iso3","has_temp","has_prec"} <= set(snap.columns):
     iso_temp = set(snap.loc[snap["has_temp"] == 1, "iso3"].astype(str).str.upper())
     iso_prec = set(snap.loc[snap["has_prec"] == 1, "iso3"].astype(str).str.upper())
     iso_with_data = iso_temp | iso_prec
 else:
+    # fallback from parquet files
     def _safe_read(fname):
         try:
             return pd.read_parquet(_download_from_hub(fname))
@@ -205,7 +202,58 @@ else:
     iso_prec = _isos(cp) | _isos(cip)
     iso_with_data = iso_temp | iso_prec
 
-# ---------- countries master (names) ----------
+# Expose availability early (needed by pending nav)
+st.session_state["iso_temp"] = iso_temp
+st.session_state["iso_prec"] = iso_prec
+st.session_state["iso_with_data"] = iso_with_data
+
+# ---------- Title / subtitle / timestamps ----------
+latest_global = _global_latest_month()
+fresh_label = pd.to_datetime(latest_global).strftime("%b %Y") if pd.notnull(latest_global) else "—"
+
+def _now_label() -> str:
+    try:
+        now = datetime.now(LOCAL_TZ) if LOCAL_TZ else datetime.now()
+        return now.strftime("%b %d, %Y %H:%M %Z")
+    except Exception:
+        return datetime.now().strftime("%b %d, %Y %H:%M")
+
+# ---------- Indicator routing ----------
+AVAILABLE_INDICATORS = ["Temperature", "Precipitation"]
+INDICATOR_TO_PAGE = {
+    "Temperature": ("pages/1_Temperature_Dashboard.py", "1_Temperature_Dashboard"),
+    "Precipitation": ("pages/2_Precipitation_Dashboard.py", "2_Precipitation_Dashboard"),
+}
+
+def _navigate_to_dashboard_immediate(iso3: str, indicator: str):
+    """Execute navigation now (used by the pending-nav runner)."""
+    ind = indicator or "Temperature"
+    page_path, page_qp = INDICATOR_TO_PAGE.get(ind, INDICATOR_TO_PAGE["Temperature"])
+    # availability fallback
+    if ind == "Precipitation" and iso3 not in st.session_state.get("iso_prec", set()):
+        ind = "Temperature"
+        page_path, page_qp = INDICATOR_TO_PAGE["Temperature"]
+    st.session_state["nav_iso3"] = iso3
+    st.query_params.update({"page": page_qp, "iso3": iso3, "city": ""})
+    try:
+        st.switch_page(page_path)
+    except Exception:
+        st.rerun()
+
+# ---------- Pending navigation handler (runs after availability is ready) ----------
+def _perform_nav_if_pending():
+    nav = st.session_state.get("_pending_nav")
+    if not nav:
+        return
+    iso3 = nav.get("iso3")
+    indicator = nav.get("indicator") or "Temperature"
+    st.session_state["_pending_nav"] = None  # clear first to avoid loops
+    _navigate_to_dashboard_immediate(iso3, indicator)
+
+# Call once now (availability already set above)
+_perform_nav_if_pending()
+
+# ---------- Countries master (names) ----------
 if pycountry:
     all_countries = pd.DataFrame(
         [{"iso3": c.alpha_3, "name": c.name} for c in pycountry.countries if hasattr(c, "alpha_3")]
@@ -216,7 +264,7 @@ else:
 
 all_countries["iso3"] = all_countries["iso3"].astype(str).str.upper().str.strip()
 
-# Name remaps
+# Name remaps (per your requirements)
 _name_overrides = {"CHN": "People's Republic of China", "TWN": "Taipe, China", "HKG": "Hong Kong, China"}
 all_countries["name"] = all_countries.apply(lambda r: _name_overrides.get(r["iso3"], r.get("name", r["iso3"])), axis=1)
 
@@ -233,7 +281,7 @@ def _badges(iso):
     return "—"
 all_countries["badges"] = all_countries["iso3"].map(_badges)
 
-# --- continent membership helper (for filtering) ---
+# --- Continent membership helper (for filtering) ---
 @st.cache_data(show_spinner=False)
 def _continent_lookup() -> dict:
     gm = px.data.gapminder()
@@ -258,53 +306,13 @@ def _isos_for_region(region_name: str, all_isos: pd.Series) -> set:
     res = {iso for iso in all_isos if CONTINENT_OF.get(iso, None) == region_name}
     return res or set(all_isos.tolist())
 
-# Latest month badge
-latest_global = _global_latest_month()
-fresh_label = pd.to_datetime(latest_global).strftime("%b %Y") if pd.notnull(latest_global) else "—"
-
-def _now_label() -> str:
-    try:
-        now = datetime.now(LOCAL_TZ) if LOCAL_TZ else datetime.now()
-        return now.strftime("%b %d, %Y %H:%M %Z")
-    except Exception:
-        return datetime.now().strftime("%b %d, %Y %H:%M")
-
-# ---------- TITLE & SUBTITLE ----------
+# ---------- Title & subtitle ----------
 st.markdown("<h1 style='text-align:center'>Global Database of Subnational Climate Indicators</h1>", unsafe_allow_html=True)
 st.markdown("<div class='subtitle'>Built and Maintained by Roshen Fernando and Patrick Jaime Simba</div>", unsafe_allow_html=True)
 st.divider()
 
-# ===== SPLIT HERO (cross-browser banners; no :has()) =====
-# --- styles for the left hero panel ---
-st.markdown("""
-<style>
-/* bullet-proof tinted fill that ignores external backgrounds */
-.panel-left{
-  position: relative;
-  border: 1px solid rgba(235,92,86,0.25);
-  border-radius:16px;
-  padding:16px 18px;
-  margin-bottom:10px;
-  background: transparent !important;  /* neutralize white fills */
-  overflow: hidden;                     /* keep rounded corners */
-}
-.panel-left::before{
-  content:"";
-  position:absolute;
-  inset:0;                              /* top/right/bottom/left: 0 */
-  background: rgba(235,92,86,0.06);     /* <— change shade here */
-  border-radius: inherit;
-  z-index: 0;
-}
-/* ensure content sits above the background layer */
-.panel-left > *{ position: relative; z-index: 1; }
-</style>
-""", unsafe_allow_html=True)
-
-
+# ===== HERO split: left (message) + right (Custom Chart Builder) =====
 left, right = st.columns([0.62, 0.38], gap="large")
-
-# LEFT: render the entire hero as ONE html block (works everywhere)
 with left:
     st.markdown(
         f"""
@@ -319,9 +327,6 @@ with left:
         """,
         unsafe_allow_html=True
     )
-
-
-# RIGHT: keep your existing caption + button code (widgets need native Streamlit)
 with right:
     st.subheader("Custom Chart Builder")
     st.write(
@@ -329,20 +334,22 @@ with right:
         "combine countries/ADM1s, facet, smooth, normalize and export."
     )
     if st.button("📈 Generate a custom chart", key="hero_custom_chart"):
-        st.switch_page("pages/0_Custom_Chart.py")
+        try:
+            st.switch_page("pages/0_Custom_Chart.py")
+        except Exception:
+            st.rerun()
     st.caption("Starts a flexible chart workspace with export options.")
 
-# ===== END SPLIT HERO =====
-
-
-# ---------- FIRST-LOAD CACHE HINT ----------
+# ---------- First-load cache hint ----------
 if "first_load_hint" not in st.session_state:
     st.info("Tip: first load warms the cache; subsequent loads should be faster.", icon="💡")
     st.session_state["first_load_hint"] = True
 
-# ---------- CONTROLS ----------
+# ---------- Controls ----------
 if "region_scope" not in st.session_state:
     st.session_state["region_scope"] = "World"
+if "default_indicator" not in st.session_state:
+    st.session_state["default_indicator"] = "Temperature"
 
 def _log_event(evt: str, payload: dict):
     if "analytics" not in st.session_state:
@@ -354,9 +361,15 @@ def _reset_scope():
     st.session_state["region_scope"] = "World"
     _log_event("reset_view", {"to": "World"})
 
+def _request_nav(iso3: str, indicator: str):
+    """Queue navigation; actual switch happens at top via _perform_nav_if_pending()."""
+    st.session_state["_pending_nav"] = {"iso3": iso3, "indicator": indicator}
+    st.rerun()
+
 quick_opts = ["— Type to search —"] + sorted(all_countries["name"].tolist())
 
-c1, c2, c3 = st.columns([1, 0.25, 0.15])  # Quick search | View | Reset
+# Quick search | Default Indicator | View | Reset
+c1, c2, c3, c4 = st.columns([1, 0.32, 0.25, 0.15])
 with c1:
     chosen = st.selectbox(
         "Quick search",
@@ -366,13 +379,20 @@ with c1:
     )
 with c2:
     st.selectbox(
+        "Default Indicator",
+        ["Temperature","Precipitation"],
+        key="default_indicator",
+        help="Which dashboard opens when you click a country or use Quick search. Does not change the map."
+    )
+with c3:
+    st.selectbox(
         "View",
         ["World","Africa","Asia","Europe","North America","South America","Oceania"],
         key="region_scope",
         index=["World","Africa","Asia","Europe","North America","South America","Oceania"].index(st.session_state["region_scope"]),
         help="Change geographic scope."
     )
-with c3:
+with c4:
     st.markdown('<div class="align-with-input"></div>', unsafe_allow_html=True)
     st.button("Reset view", use_container_width=True, on_click=_reset_scope)
 
@@ -391,20 +411,13 @@ if st.session_state["last_region_logged"] != st.session_state["region_scope"]:
     _log_event("view_change", {"to": st.session_state["region_scope"]})
     st.session_state["last_region_logged"] = st.session_state["region_scope"]
 
-# Navigate if quick search used (and log)
+# Navigate if quick search used — respects Default Indicator
 if chosen and chosen != "— Type to search —":
     row = all_countries.loc[all_countries["name"] == chosen].iloc[0]
     iso3_jump = row["iso3"]
     if iso3_jump in iso_with_data:
-        _log_event("quick_search_open", {"iso3": iso3_jump})
-        if st.session_state.get("_last_country_click") != iso3_jump:
-            st.session_state["_last_country_click"] = iso3_jump
-            st.session_state["nav_iso3"] = iso3_jump
-            st.query_params.update({"page":"1_Temperature_Dashboard","iso3":iso3_jump,"city":""})
-            try:
-                st.switch_page("pages/1_Temperature_Dashboard.py")
-            except Exception:
-                st.rerun()
+        _log_event("quick_search_open", {"iso3": iso3_jump, "indicator": st.session_state.get("default_indicator", "Temperature")})
+        _request_nav(iso3_jump, st.session_state.get("default_indicator", "Temperature"))
     else:
         st.info(f"{chosen}: No available indicators.", icon="ℹ️")
 
@@ -418,6 +431,7 @@ window.addEventListener('resize',send);send();})();
 """, height=0)
 vw = int(vp["width"]) if isinstance(vp, dict) and "width" in vp else 1280
 
+# Taller for continents so small countries are easier to click
 height_ratio = {"World":0.50,"Africa":0.82,"Asia":0.80,"Europe":0.90,"North America":0.82,"South America":0.94,"Oceania":0.86}
 ratio = height_ratio.get(st.session_state["region_scope"], 0.70)
 map_h = max(600, int(vw * ratio))
@@ -442,10 +456,16 @@ fig.update_layout(margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)", p
              bgcolor="rgba(0,0,0,0)", scope=scope_val,
              fitbounds="locations" if st.session_state["region_scope"]!="World" else None,
              lataxis_range=[-60,85] if st.session_state["region_scope"]=="World" else None))
+
 st.markdown('<div class="full-bleed">', unsafe_allow_html=True)
-events = plotly_events(fig, click_event=True, hover_event=False, override_height=map_h, override_width="100%")
+if plotly_events:
+    events = plotly_events(fig, click_event=True, hover_event=False, override_height=map_h, override_width="100%")
+else:
+    st.plotly_chart(fig, use_container_width=True)
+    events = []
 st.markdown('</div>', unsafe_allow_html=True)
 
+# Click → Selected indicator dashboard (queue + next-run perform)
 clicked_iso3 = None
 if events:
     e = events[0]
@@ -453,16 +473,10 @@ if events:
         idx = e.get("pointIndex", None)
         if idx is not None and 0 <= idx < len(plot_df):
             clicked_iso3 = str(plot_df.iloc[idx]["iso3"]).upper()
+
 if clicked_iso3 and clicked_iso3 in iso_with_data:
-    _log_event("map_click_open", {"iso3": clicked_iso3})
-    if st.session_state.get("_last_country_click") != clicked_iso3:
-        st.session_state["_last_country_click"] = clicked_iso3
-        st.session_state["nav_iso3"] = clicked_iso3
-        st.query_params.update({"page":"1_Temperature_Dashboard","iso3":clicked_iso3,"city":""})
-        try:
-            st.switch_page("pages/1_Temperature_Dashboard.py")
-        except Exception:
-            st.rerun()
+    _log_event("map_click_open", {"iso3": clicked_iso3, "indicator": st.session_state.get("default_indicator", "Temperature")})
+    _request_nav(clicked_iso3, st.session_state.get("default_indicator", "Temperature"))
 
 # =========================
 # GLOBAL SNAPSHOT (BETA)
@@ -505,22 +519,18 @@ def _ensure_iso_date(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     return d
 
 def _pick_value_column(df: pd.DataFrame, indicator: str) -> Optional[str]:
-    """Pick the correct numeric column for temperature or precipitation."""
     if df is None or df.empty: return None
     cols = {c.lower(): c for c in df.columns}
-    # strong preferences by indicator
     if indicator == "temp":
         preferred = ["temperature_c","temp_c","tavg_c","tas_c","temperature","temp","tavg","tas","mean_temp"]
-    else:  # precip
+    else:
         preferred = ["precip_mm","prcp_mm","pr_mm","precipitation_mm","precipitation","prcp","pr","ppt","rain_mm"]
     for k in preferred:
         if k.lower() in cols and pd.api.types.is_numeric_dtype(df[cols[k.lower()]]):
             return cols[k.lower()]
-    # fallback: choose a numeric column whose name contains a tell-tale token
     tokens = ["temp","tas"] if indicator=="temp" else ["precip","prcp","ppt","rain","pr"]
     candidates = [c for c in df.columns if any(t in c.lower() for t in tokens) and pd.api.types.is_numeric_dtype(df[c])]
     if candidates: return candidates[0]
-    # last fallback: first numeric column (but avoid area/pop)
     avoid = {"area","population","pop","lat","lon","latitude","longitude"}
     for c in df.columns:
         if c.lower() in avoid: continue
@@ -528,7 +538,6 @@ def _pick_value_column(df: pd.DataFrame, indicator: str) -> Optional[str]:
     return None
 
 def _kelvin_to_c_if_needed(s: pd.Series) -> pd.Series:
-    """If median looks like Kelvin (>200), convert to °C."""
     if s is None or s.empty: return s
     try:
         med = float(s.dropna().median())
@@ -537,7 +546,6 @@ def _kelvin_to_c_if_needed(s: pd.Series) -> pd.Series:
         return s
 
 def _latest_by_country(df: pd.DataFrame, value_col: str) -> Optional[pd.DataFrame]:
-    """One row per ISO3 with latest Date, keeping value_col."""
     if df is None or df.empty or not {"iso3","Date", value_col} <= set(df.columns):
         return None
     d = df[["iso3","Date", value_col]].copy().sort_values(["iso3","Date"])
@@ -545,7 +553,6 @@ def _latest_by_country(df: pd.DataFrame, value_col: str) -> Optional[pd.DataFram
     return out
 
 def _series_latest_for_hist(raw_df: Optional[pd.DataFrame], indicator: str) -> Optional[pd.Series]:
-    """Return a 1D series: latest value per country for the indicator, with proper units."""
     df = _ensure_iso_date(raw_df)
     if df is None: return None
     val_col = _pick_value_column(df, indicator)
@@ -555,10 +562,8 @@ def _series_latest_for_hist(raw_df: Optional[pd.DataFrame], indicator: str) -> O
     s = latest[val_col]
     if indicator == "temp":
         s = _kelvin_to_c_if_needed(s)
-        # sanity clamp: drop outliers outside realistic Earth temps in °C
         s = s[(s > -80) & (s < 60)]
     else:
-        # precipitation sanity: remove extreme outliers (e.g., if someone put totals in meters)
         s = s[(s >= 0) & (s < 2000)]
     return s.dropna()
 
@@ -685,7 +690,7 @@ if IS_ADMIN:
     st.caption("Lightweight, in-session logs. Export below. (Counts reset per session.)")
     if a:
         df_log = pd.DataFrame(a)
-        st.dataframe(df_log)
+        st.dataframe(df_log, use_container_width=True)
         st.download_button(
             "Download logs (CSV)",
             data=df_log.to_csv(index=False).encode("utf-8"),
@@ -699,7 +704,7 @@ if IS_ADMIN:
     else:
         st.info("No events logged yet in this session.", icon="ℹ️")
 
-# ---------- footer ----------
+# ---------- Footer ----------
 st.markdown("""
 <div class="footer-box">
   <em>Note:</em> This page time-stamps the "Last Update" at render time (Asia/Manila).
