@@ -85,6 +85,45 @@ def _dl(filename:str)->str:
 def read_parquet_from_hf(filename:str)->pd.DataFrame:
     return pd.read_parquet(_dl(filename))
 
+def _count_legend_items(fig: go.Figure) -> int:
+    return sum(1 for tr in fig.data if getattr(tr, "showlegend", True))
+
+def _auto_place_legend(fig: go.Figure, faceted: bool):
+    """Avoid title/legend collisions by moving the legend when needed."""
+    n_items = _count_legend_items(fig)
+    # Heuristics:
+    # - if faceting OR legend has many items, put legend at bottom (horizontal, centered)
+    # - else, keep legend at top-right
+    if faceted or n_items > 4:
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                x=0.5, xanchor="center",
+                y=-0.16, yanchor="top",
+                traceorder="normal",
+                font=dict(size=12),
+                itemwidth=80,
+            ),
+        )
+        # ensure enough bottom margin for the legend
+        mb = fig.layout.margin.b if fig.layout.margin and fig.layout.margin.b is not None else 80
+        fig.update_layout(margin=dict(b=max(mb, 120)))
+    else:
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                x=1.0, xanchor="right",   # top-right keeps clear of left subplot title
+                y=1.0, yanchor="top",
+                traceorder="normal",
+                font=dict(size=12),
+            ),
+        )
+        mt = fig.layout.margin.t if fig.layout.margin and fig.layout.margin.t is not None else 64
+        fig.update_layout(margin=dict(t=max(mt, 80)))
+
+    # small quality-of-life defaults
+    fig.update_layout(legend_tracegroupgap=8)
+
 # =================== LOAD (FAST: countries only) ===================
 with st.spinner("Loading country datasets…"):
     COUNTRY_TEMP  = read_parquet_from_hf("country_temperature.snappy.parquet")
@@ -738,6 +777,18 @@ else:  # Geography facets
 if chart_type=="Area":
     for tr in fig.select_traces(type="scatter"):
         tr.update(fill="tozeroy", hoverinfo="x+y+name")
+
+# Keep generous y-axis title standoff as you already had
+fig.update_yaxes(title_standoff=86, automargin=True, secondary_y=False)
+fig.update_yaxes(title_standoff=86, automargin=True, secondary_y=True)
+
+# >>> NEW: auto-place the legend to avoid overlap with facet titles
+_is_faceted = (facet_by != "None")
+_auto_place_legend(fig if isinstance(fig, go.Figure) else getattr(fig, "figure", fig), _is_faceted)
+
+# Render
+#st.plotly_chart(fig, use_container_width=True, config=_modebar_cfg())
+
 
 # Avoid y-title/tick clashes with generous standoff
 fig.update_yaxes(title_standoff=86, automargin=True, secondary_y=False)
